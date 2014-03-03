@@ -46,6 +46,9 @@
 #include "../Layer.h"           // needed only for debugging
 #include "../SurfaceFlinger.h"
 
+#if defined(ENABLE_SWAPRECT) && defined(QCOM_BSP)
+#include "cb_swap_rect.h"
+#endif
 namespace android {
 
 #define MIN_HWC_HEADER_VERSION HWC_HEADER_VERSION
@@ -66,7 +69,8 @@ static bool hwcHasApiVersion(const hwc_composer_device_1_t* hwc,
 }
 
 static bool hwcHasVsyncEvent(const hwc_composer_device_1_t* hwc) {
-    return hwcHasApiVersion(hwc, HWC_DEVICE_API_VERSION_0_3);
+    return hwcHasApiVersion(hwc, HWC_DEVICE_API_VERSION_0_3) ||
+           hwcHeaderVersion(hwc) >= 3;
 }
 
 static size_t sizeofHwcLayerList(const hwc_composer_device_1_t* hwc,
@@ -187,7 +191,8 @@ HWComposer::HWComposer(
       mFbDev(0), mHwc(0), mNumDisplays(1),
       mCBContext(new cb_context),
       mEventHandler(handler),
-      mDebugForceFakeVSync(false)
+      mDebugForceFakeVSync(false),
+      mSwapRectOn(false)
 {
     for (size_t i =0 ; i<MAX_HWC_DISPLAYS ; i++) {
         mLists[i] = 0;
@@ -628,7 +633,8 @@ void HWComposer::eventControl(int disp, int event, int enabled) {
             break;
         case EVENT_ORIENTATION:
             // Orientation event
-            err = mHwc->eventControl(mHwc, disp, event, enabled);
+            if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_0))
+                err = hwcEventControl(mHwc, disp, event, enabled);
             break;
         default:
             ALOGW("eventControl got unexpected event %d (disp=%d en=%d)",
@@ -734,7 +740,7 @@ status_t HWComposer::prepare() {
         mLists[i] = disp.list;
         if (mLists[i]) {
             if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_3)) {
-                mLists[i]->outbuf = NULL;
+                mLists[i]->outbuf = disp.outbufHandle;
                 mLists[i]->outbufAcquireFenceFd = -1;
             } else if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
                 // garbage data to catch improper use
@@ -772,10 +778,20 @@ status_t HWComposer::prepare() {
                         if (l.compositionType == HWC_FRAMEBUFFER) {
                             disp.hasFbComp = true;
                         }
+                        // If the composition type is BLIT, we set this to
+                        // trigger a FLIP
+                        if(l.compositionType == HWC_BLIT) {
+                            disp.hasFbComp = true;
+                        }
                         if (l.compositionType == HWC_OVERLAY) {
                             disp.hasOvComp = true;
                         }
                     }
+                    if (disp.list->numHwLayers == (disp.framebufferTarget ? 1 : 0)) {
+                        disp.hasFbComp = true;
+                    }
+                } else {
+                    disp.hasFbComp = true;
                 }
             }
         } else {
@@ -796,19 +812,20 @@ status_t HWComposer::prepare() {
                     if (l.compositionType == HWC_FRAMEBUFFER) {
                         disp.hasFbComp = true;
                     }
+                    // If the composition type is BLIT, we set this to
+                    // trigger a FLIP
+                    if(l.compositionType == HWC_BLIT) {
+                        disp.hasFbComp = true;
+                     // Setting disp.hasBlitComp to true to identify
+                     // blit cases. This is used in features like swaprect.
+                        disp.hasBlitComp = true;
+                    }
                     if (l.compositionType == HWC_OVERLAY) {
                         disp.hasOvComp = true;
                     }
                 }
-                if (disp.list->numHwLayers == (disp.framebufferTarget ? 1 : 0)) {
-                    disp.hasFbComp = true;
-                }
-            } else {
-                disp.hasFbComp = true;
             }
-
         }
-
     }
     return (status_t)err;
 }
@@ -823,6 +840,12 @@ bool HWComposer::hasGlesComposition(int32_t id) const {
     if (!mHwc || uint32_t(id)>31 || !mAllocatedDisplayIDs.hasBit(id))
         return true;
     return mDisplayData[id].hasFbComp;
+}
+
+bool HWComposer::hasBlitComposition(int32_t id) const {
+    if (!mHwc || uint32_t(id)>31 || !mAllocatedDisplayIDs.hasBit(id))
+         return false;
+    return mDisplayData[id].hasBlitComp;
 }
 
 sp<Fence> HWComposer::getAndResetReleaseFence(int32_t id) {
@@ -1030,8 +1053,38 @@ public:
         // not supported on VERSION_03
         return Fence::NO_FENCE;
     }
+    bool isStatusBar(hwc_layer_t* layer) {
+        /* Getting the display details into the iterator is more trouble than
+         * it's worth, so do a rough approximation */
+
+        // Aligned to the top-left corner and less than 60px tall
+        if (layer->displayFrame.top == 0 &&
+            layer->displayFrame.left == 0 && layer->displayFrame.bottom < 60) {
+            return true;
+        }
+        // Landscape:
+        // Aligned to the top, right-cropped at less than 60px
+        if (layer->displayFrame.top == 0 &&
+            layer->sourceCrop.right < 60) {
+            return true;
+        }
+        // Upside-down:
+        // Left-aligned, bottom-cropped at less than 60, and the projected frame matches the crop height
+        if (layer->displayFrame.left == 0 && layer->sourceCrop.bottom < 60 &&
+            layer->displayFrame.bottom - layer->displayFrame.top == layer->sourceCrop.bottom) {
+            return true;
+        }
+        return false;
+    }
+
     virtual void setPlaneAlpha(uint8_t alpha) {
-        if (alpha < 0xFF) {
+        bool forceSkip = false;
+        // PREMULT on the statusbar layer will artifact miserably on VERSION_03
+        // due to the translucency, so skip compositing
+        if (getLayer()->blending == HWC_BLENDING_PREMULT && isStatusBar(getLayer())) {
+            forceSkip = true;
+        }
+        if (alpha < 0xFF || forceSkip) {
             getLayer()->flags |= HWC_SKIP_LAYER;
         }
     }
@@ -1071,7 +1124,18 @@ public:
         reinterpret_cast<Rect&>(getLayer()->displayFrame) = frame;
     }
     virtual void setCrop(const FloatRect& crop) {
-        reinterpret_cast<FloatRect&>(getLayer()->sourceCrop) = crop;
+        /*
+         * Since h/w composer didn't support a flot crop rect before version 1.3,
+         * using integer coordinates instead produces a different output from the GL code in
+         * Layer::drawWithOpenGL(). The difference can be large if the buffer crop to
+         * window size ratio is large and a window crop is defined
+         * (i.e.: if we scale the buffer a lot and we also crop it with a window crop).
+         */
+        hwc_rect_t& r = getLayer()->sourceCrop;
+        r.left  = int(ceilf(crop.left));
+        r.top   = int(ceilf(crop.top));
+        r.right = int(floorf(crop.right));
+        r.bottom= int(floorf(crop.bottom));
     }
     virtual void setVisibleRegionScreen(const Region& reg) {
         // Region::getSharedBuffer creates a reference to the underlying
@@ -1274,10 +1338,46 @@ HWComposer::LayerListIterator HWComposer::end(int32_t id) {
     return getLayerIterator(id, numLayers);
 }
 
+
+void HWComposer::setSwapRect(Rect dirtyRect)
+{
+    DisplayData& disp(mDisplayData[0]);
+
+    for (size_t i=0 ; i<disp.list->numHwLayers-1 ; i++) {
+         hwc_layer_1_t &l = disp.list->hwLayers[i];
+         Rect temp;
+         Rect dCrop;
+         dCrop.left =l.displayFrame.left;
+         dCrop.top =l.displayFrame.top;
+         dCrop.right =l.displayFrame.right;
+         dCrop.bottom =l.displayFrame.bottom;
+
+         if((dCrop).intersect(dirtyRect,&temp)) {
+               l.sourceCropf.left   = dirtyRect.left;
+               l.sourceCropf.top    = dirtyRect.top;
+               l.sourceCropf.right  = dirtyRect.right;
+               l.sourceCropf.bottom = dirtyRect.bottom;
+
+               l.displayFrame.left   = dirtyRect.left;
+               l.displayFrame.top    = dirtyRect.top;
+               l.displayFrame.right  = dirtyRect.right;
+               l.displayFrame.bottom = dirtyRect.bottom;
+          } else {
+#if defined(ENABLE_SWAPRECT) && defined(QCOM_BSP)
+               l.flags |= qdutils::HWC_SKIP_HWC_COMPOSITION;
+#endif
+          }
+     }
+}
+
+void HWComposer::setSwapRectOn(bool enable){
+    mSwapRectOn = enable;
+}
 void HWComposer::dump(String8& result) const {
     if (mHwc) {
         result.appendFormat("Hardware Composer state (version %8x):\n", hwcApiVersion(mHwc));
         result.appendFormat("  mDebugForceFakeVSync=%d\n", mDebugForceFakeVSync);
+        result.appendFormat("  mSwapRectOn=%d\n",mSwapRectOn);
         for (size_t i=0 ; i<mNumDisplays ; i++) {
             const DisplayData& disp(mDisplayData[i]);
             if (!disp.connected)
@@ -1325,6 +1425,7 @@ void HWComposer::dump(String8& result) const {
                             "HWC",
                             "BACKGROUND",
                             "FB TARGET",
+                            "FB_BLIT",
                             "UNKNOWN"};
                     if (type >= NELEM(compositionTypeName))
                         type = NELEM(compositionTypeName) - 1;

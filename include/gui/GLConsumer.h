@@ -171,6 +171,8 @@ public:
 
     // getCurrentCrop returns the cropping rectangle of the current buffer.
     Rect getCurrentCrop() const;
+    // getDirtyRegion gives the dirty rect to associated buffer for a layer.
+    void getDirtyRegion(Rect& dirtyRect);
 
     // getCurrentTransform returns the transform of the current buffer.
     uint32_t getCurrentTransform() const;
@@ -373,7 +375,13 @@ private:
     // glCopyTexSubImage to read from the texture.  This is a hack to work
     // around a GL driver limitation on the number of FBO attachments, which the
     // browser's tile cache exceeds.
+#ifdef DECIDE_TEXTURE_TARGET
+protected:
+    uint32_t mTexTarget;
+private:
+#else
     const uint32_t mTexTarget;
+#endif
 
     // EGLSlot contains the information and object references that
     // GLConsumer maintains about a BufferQueue buffer slot.

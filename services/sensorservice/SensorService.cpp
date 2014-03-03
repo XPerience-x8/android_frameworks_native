@@ -480,6 +480,11 @@ String8 SensorService::getSensorName(int handle) const {
     return result;
 }
 
+bool SensorService::isVirtualSensor(int handle) const {
+    SensorInterface* sensor = mSensorMap.valueFor(handle);
+    return sensor->isVirtual();
+}
+
 Vector<Sensor> SensorService::getSensorList()
 {
     char value[PROPERTY_VALUE_MAX];
@@ -589,19 +594,29 @@ status_t SensorService::enable(const sp<SensorEventConnection>& connection,
 
     status_t err = sensor->batch(connection.get(), handle, reservedFlags, samplingPeriodNs,
                                  maxBatchReportLatencyNs);
+
+    const SensorDevice& device(SensorDevice::getInstance());
+
     if (err == NO_ERROR) {
-        connection->setFirstFlushPending(handle, true);
-        status_t err_flush = sensor->flush(connection.get(), handle);
-        // Flush may return error if the sensor is not activated or the underlying h/w sensor does
-        // not support flush.
-        if (err_flush != NO_ERROR) {
-            connection->setFirstFlushPending(handle, false);
+        if (device.getHalDeviceVersion() >= SENSORS_DEVICE_API_VERSION_1_1) {
+            connection->setFirstFlushPending(handle, true);
+            status_t err_flush = sensor->flush(connection.get(), handle);
+            // Flush may return error if the sensor is not activated or the underlying h/w sensor does
+            // not support flush.
+            if (err_flush != NO_ERROR) {
+                connection->setFirstFlushPending(handle, false);
+            }
         }
     }
 
     if (err == NO_ERROR) {
         ALOGD_IF(DEBUG_CONNECTIONS, "Calling activate on %d", handle);
         err = sensor->activate(connection.get(), true);
+    }
+
+    if (device.getHalDeviceVersion() < SENSORS_DEVICE_API_VERSION_1_1) {
+        // Pre-1.1 sensor HALs had no flush method, and relied on setDelay at init
+        sensor->setDelay(connection.get(), handle, samplingPeriodNs);
     }
 
     if (err != NO_ERROR) {
@@ -858,6 +873,11 @@ status_t SensorService::SensorEventConnection::sendEvents(
         }
     }
 
+    // Early return if there are no events for this connection.
+    if (count == 0) {
+        return status_t(NO_ERROR);
+    }
+
     // NOTE: ASensorEvent and sensors_event_t are the same type
     ssize_t size = SensorEventQueue::write(mChannel,
             reinterpret_cast<ASensorEvent const*>(scratch), count);
@@ -922,7 +942,7 @@ status_t  SensorService::SensorEventConnection::flush() {
     // Loop through all sensors for this connection and call flush on each of them.
     for (size_t i = 0; i < mSensorInfo.size(); ++i) {
         const int handle = mSensorInfo.keyAt(i);
-        if (halVersion < SENSORS_DEVICE_API_VERSION_1_1) {
+        if (halVersion < SENSORS_DEVICE_API_VERSION_1_1 || mService->isVirtualSensor(handle)) {
             // For older devices just increment pending flush count which will send a trivial
             // flush complete event.
             FlushInfo& flushInfo = mSensorInfo.editValueFor(handle);

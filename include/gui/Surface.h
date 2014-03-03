@@ -78,6 +78,8 @@ public:
         return surface != NULL && surface->getIGraphicBufferProducer() != NULL;
     }
 
+    status_t setDirtyRegion(Region* dirty = NULL);
+
 protected:
     virtual ~Surface();
 
@@ -260,6 +262,13 @@ private:
 
     // must be accessed from lock/unlock thread only
     Region mDirtyRegion;
+
+#ifdef SURFACE_SKIP_FIRST_DEQUEUE
+    bool                        mDequeuedOnce;
+#endif
+
+    // mDequeueIdx will be used to store the current buffer index for a layer.
+    int mDequeueIdx;
 };
 
 }; // namespace android
