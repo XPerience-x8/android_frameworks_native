@@ -24,7 +24,6 @@
 #ifdef ECLAIR_LIBCAMERA
 #include <binder/MemoryDealer.h>
 #endif
-
 #include <binder/MemoryHeapBase.h>
 #include <binder/IMemory.h>
 #include <utils/SortedVector.h>
@@ -37,7 +36,6 @@ namespace android {
 class MemoryHeapBase;
 
 // ---------------------------------------------------------------------------
-
 #ifndef ECLAIR_LIBCAMERA
 class MemoryHeapPmem : public MemoryHeapBase
 #else
