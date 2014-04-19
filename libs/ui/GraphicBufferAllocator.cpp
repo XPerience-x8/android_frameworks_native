@@ -1,6 +1,7 @@
 /*
 **
 ** Copyright 2009, The Android Open Source Project
+** Copyright (C) 2014 The XPerience Project
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
 ** you may not use this file except in compliance with the License.
@@ -121,6 +122,15 @@ status_t GraphicBufferAllocator::alloc(uint32_t w, uint32_t h,
             w, h, format, usage, bufferSize, err, strerror(-err));
 #else
     
+#ifdef MISSING_EGL_PIXEL_FORMAT_YV12
+    if (format == HAL_PIXEL_FORMAT_YV12) {
+        format = HAL_PIXEL_FORMAT_RGBX_8888;
+    }
+    if (usage & GRALLOC_USAGE_EXTERNAL_DISP) {
+        usage ^= GRALLOC_USAGE_EXTERNAL_DISP;
+    }
+#endif
+
 #ifdef EXYNOS4_ENHANCEMENTS
     if ((format == 0x101) || (format == 0x105) || (format == 0x107)) {
         // 0x101 = HAL_PIXEL_FORMAT_YCbCr_420_P (Samsung-specific pixel format)
