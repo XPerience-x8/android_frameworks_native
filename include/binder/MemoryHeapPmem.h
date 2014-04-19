@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2014 The XPerience Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +21,16 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#ifdef ECLAIR_LIBCAMERA
+#include <binder/MemoryDealer.h>
+#endif
+
 #include <binder/MemoryHeapBase.h>
 #include <binder/IMemory.h>
 #include <utils/SortedVector.h>
+#ifndef ECLAIR_LIBCAMERA
 #include <utils/threads.h>
+#endif
 
 namespace android {
 
@@ -31,7 +38,11 @@ class MemoryHeapBase;
 
 // ---------------------------------------------------------------------------
 
+#ifndef ECLAIR_LIBCAMERA
 class MemoryHeapPmem : public MemoryHeapBase
+#else
+class MemoryHeapPmem : public HeapInterface, public MemoryHeapBase
+#endif
 {
 public:
     class MemoryPmem : public BnMemory {
