@@ -14,9 +14,15 @@
  * limitations under the License.
  */
 
+<<<<<<< HEAD
 #ifdef ECLAIR_LIBCAMERA
 #include <binder/MemoryDealerEclair.h>
 #endif
+=======
+#ifndef ANDROID_MEMORY_DEALER_H
+#define ANDROID_MEMORY_DEALER_H
+
+>>>>>>> parent of 8769802...  Libcamera (SEMC) fix for using eclair libcamera (2/3)
 
 #ifndef ANDROID_MEMORY_DEALER_H
 #define ANDROID_MEMORY_DEALER_H

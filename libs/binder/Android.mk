@@ -26,6 +26,7 @@ sources := \
     IPCThreadState.cpp \
     IPermissionController.cpp \
     IServiceManager.cpp \
+    MemoryDealer.cpp \
     MemoryBase.cpp \
     MemoryHeapBase.cpp \
     Parcel.cpp \
@@ -42,12 +43,6 @@ endif
 ifeq ($(BOARD_NEEDS_MEMORYHEAPION),true)
 sources += \
     MemoryHeapIon.cpp
-endif
-
-ifeq ($(BOARD_USES_ECLAIR_LIBCAMERA),true)
-sources += MemoryDealerEclair.cpp
-else
-sources += MemoryDealer.cpp
 endif
 
 LOCAL_PATH:= $(call my-dir)
