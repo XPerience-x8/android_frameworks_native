@@ -20,12 +20,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-<<<<<<< HEAD
-#ifdef ECLAIR_LIBCAMERA
-#include <binder/MemoryDealer.h>
-#endif
-=======
->>>>>>> parent of 8769802...  Libcamera (SEMC) fix for using eclair libcamera (2/3)
 #include <binder/MemoryHeapBase.h>
 #include <binder/IMemory.h>
 #include <utils/SortedVector.h>
@@ -36,11 +30,6 @@ namespace android {
 class MemoryHeapBase;
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
-#ifndef ECLAIR_LIBCAMERA
-=======
-
->>>>>>> parent of 8769802...  Libcamera (SEMC) fix for using eclair libcamera (2/3)
 class MemoryHeapPmem : public MemoryHeapBase
 {
 public:
